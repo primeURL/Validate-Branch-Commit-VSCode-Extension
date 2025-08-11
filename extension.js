@@ -1,0 +1,586 @@
+// The module 'vscode' contains the VS Code extensibility API
+const vscode = require('vscode');
+const { exec } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+
+// Branch naming conventions
+const BRANCH_PATTERNS = {
+    gitflow: /^(feature|bugfix|hotfix|release)\/[a-z0-9-]+$/,
+    conventional: /^(feat|fix|docs|style|refactor|test|chore)\/[a-z0-9-]+$/,
+    jira: /^(feature|bugfix|hotfix)\/[A-Z]+-\d+-.+$/,
+    simple: /^[a-z0-9-]+$/
+};
+
+// Commit message patterns
+const COMMIT_PATTERNS = {
+    conventional: /^(feat|fix|docs|style|refactor|perf|test|chore)(\(.+\))?: .{1,50}/,
+    angular: /^(build|ci|docs|feat|fix|perf|refactor|style|test)(\(.+\))?: .{1,50}/,
+    simple: /^.{10,72}$/
+};
+
+/**
+ * Get the current workspace folder path
+ */
+function getWorkspacePath() {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+        return null;
+    }
+    return workspaceFolders[0].uri.fsPath;
+}
+
+/**
+ * Execute git command
+ */
+function executeGitCommand(command, workspacePath) {
+    return new Promise((resolve, reject) => {
+        exec(command, { cwd: workspacePath }, (error, stdout) => {
+            if (error) {
+                reject(error);
+            } else {
+                resolve(stdout.trim());
+            }
+        });
+    });
+}
+
+/**
+ * Get extension configuration
+ */
+function getConfig() {
+    const config = vscode.workspace.getConfiguration('validateBranch');
+    return {
+        branchPattern: config.get('branchPattern', 'conventional'),
+        commitPattern: config.get('commitPattern', 'conventional'),
+        enableBranchValidation: config.get('enableBranchValidation', true),
+        enableCommitValidation: config.get('enableCommitValidation', true),
+        customBranchPattern: config.get('customBranchPattern', ''),
+        customCommitPattern: config.get('customCommitPattern', '')
+    };
+}
+
+/**
+ * Get current extension configuration for hooks
+ */
+function getHookConfig(workspacePath) {
+    try {
+        const configPath = path.join(workspacePath, '.vscode', 'settings.json');
+        let config = {
+            branchPattern: 'conventional',
+            commitPattern: 'conventional',
+            enableBranchValidation: true,
+            enableCommitValidation: true,
+            customBranchPattern: '',
+            customCommitPattern: ''
+        };
+        
+        if (fs.existsSync(configPath)) {
+            const settings = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            config.branchPattern = settings['validateBranch.branchPattern'] || config.branchPattern;
+            config.commitPattern = settings['validateBranch.commitPattern'] || config.commitPattern;
+            config.enableBranchValidation = settings['validateBranch.enableBranchValidation'] !== false;
+            config.enableCommitValidation = settings['validateBranch.enableCommitValidation'] !== false;
+            config.customBranchPattern = settings['validateBranch.customBranchPattern'] || '';
+            config.customCommitPattern = settings['validateBranch.customCommitPattern'] || '';
+        }
+        
+        return config;
+    } catch {
+        return {
+            branchPattern: 'conventional',
+            commitPattern: 'conventional',
+            enableBranchValidation: true,
+            enableCommitValidation: true,
+            customBranchPattern: '',
+            customCommitPattern: ''
+        };
+    }
+}
+
+/**
+ * Generate branch validation script
+ */
+function generateBranchValidationScript(config) {
+    const patterns = {
+        gitflow: '^(feature|bugfix|hotfix|release)/[a-z0-9-]+$',
+        conventional: '^(feat|fix|docs|style|refactor|test|chore)/[a-z0-9-]+$',
+        jira: '^(feature|bugfix|hotfix)/[A-Z]+-[0-9]+-.+$',
+        simple: '^[a-z0-9-]+$'
+    };
+    
+    const pattern = config.branchPattern === 'custom' && config.customBranchPattern 
+        ? config.customBranchPattern 
+        : patterns[config.branchPattern] || patterns.conventional;
+    
+    const examples = {
+        gitflow: ['feature/user-authentication', 'bugfix/login-error', 'hotfix/security-patch', 'release/v1.2.0'],
+        conventional: ['feat/user-login', 'fix/button-styling', 'docs/readme-update', 'refactor/api-cleanup'],
+        jira: ['feature/PROJ-123-user-login', 'bugfix/PROJ-456-fix-crash', 'hotfix/PROJ-789-security-fix'],
+        simple: ['user-authentication', 'fix-login-bug', 'update-documentation']
+    };
+    
+    const exampleList = config.branchPattern === 'custom' 
+        ? ['custom-pattern-example'] 
+        : examples[config.branchPattern] || examples.conventional;
+    
+    return `
+validate_branch_name() {
+    local branch_name="$1"
+    local pattern="${pattern}"
+    
+    if ! echo "$branch_name" | grep -qE "$pattern"; then
+        echo "❌ Branch name '$branch_name' doesn't follow the ${config.branchPattern} convention."
+        echo ""
+        echo "Examples:"
+        ${exampleList.map(ex => `echo "  ${ex}"`).join('\n        ')}
+        echo ""
+        echo "Current pattern: $pattern"
+        return 1
+    fi
+    return 0
+}`;
+}
+
+/**
+ * Generate commit validation script
+ */
+function generateCommitValidationScript(config) {
+    const patterns = {
+        conventional: '^(feat|fix|docs|style|refactor|perf|test|chore)(\\(.+\\))?: .{1,50}',
+        angular: '^(build|ci|docs|feat|fix|perf|refactor|style|test)(\\(.+\\))?: .{1,50}',
+        simple: '^.{10,72}$'
+    };
+    
+    const pattern = config.commitPattern === 'custom' && config.customCommitPattern 
+        ? config.customCommitPattern 
+        : patterns[config.commitPattern] || patterns.conventional;
+    
+    const examples = {
+        conventional: ['feat: add user authentication', 'fix: resolve login button issue', 'docs: update README with setup instructions', 'refactor(auth): simplify login logic'],
+        angular: ['feat(auth): add user login functionality', 'fix(ui): resolve button alignment issue', 'docs: update contributing guidelines', 'test(auth): add login unit tests'],
+        simple: ['Add user authentication feature', 'Fix login button styling issue', 'Update documentation with new API']
+    };
+    
+    const exampleList = config.commitPattern === 'custom' 
+        ? ['custom-pattern-example'] 
+        : examples[config.commitPattern] || examples.conventional;
+    
+    return `
+validate_commit_message() {
+    local commit_message="$1"
+    local pattern="${pattern}"
+    
+    if ! echo "$commit_message" | grep -qE "$pattern"; then
+        echo "❌ Commit message doesn't follow the ${config.commitPattern} convention."
+        echo ""
+        echo "Examples:"
+        ${exampleList.map(ex => `echo "  ${ex}"`).join('\n        ')}
+        echo ""
+        echo "Current pattern: $pattern"
+        return 1
+    fi
+    return 0
+}`;
+}
+
+/**
+ * Validate branch name
+ */
+function validateBranchName(branchName, pattern) {
+    const config = getConfig();
+    let regex;
+    
+    if (pattern === 'custom' && config.customBranchPattern) {
+        try {
+            regex = new RegExp(config.customBranchPattern);
+        } catch {
+            vscode.window.showErrorMessage('Invalid custom branch pattern in settings');
+            return false;
+        }
+    } else {
+        regex = BRANCH_PATTERNS[pattern];
+    }
+    
+    if (!regex) {
+        return false;
+    }
+    
+    return regex.test(branchName);
+}
+
+/**
+ * Validate commit message
+ */
+function validateCommitMessage(message, pattern) {
+    const config = getConfig();
+    let regex;
+    
+    if (pattern === 'custom' && config.customCommitPattern) {
+        try {
+            regex = new RegExp(config.customCommitPattern);
+        } catch {
+            vscode.window.showErrorMessage('Invalid custom commit pattern in settings');
+            return false;
+        }
+    } else {
+        regex = COMMIT_PATTERNS[pattern];
+    }
+    
+    if (!regex) {
+        return false;
+    }
+    
+    return regex.test(message);
+}
+
+/**
+ * Get branch naming convention examples
+ */
+function getBranchExamples(pattern) {
+    const examples = {
+        gitflow: [
+            'feature/user-authentication',
+            'bugfix/login-error',
+            'hotfix/security-patch',
+            'release/v1.2.0'
+        ],
+        conventional: [
+            'feat/user-login',
+            'fix/button-styling',
+            'docs/readme-update',
+            'refactor/api-cleanup'
+        ],
+        jira: [
+            'feature/PROJ-123-user-login',
+            'bugfix/PROJ-456-fix-crash',
+            'hotfix/PROJ-789-security-fix'
+        ],
+        simple: [
+            'user-authentication',
+            'fix-login-bug',
+            'update-documentation'
+        ]
+    };
+    return examples[pattern] || [];
+}
+
+/**
+ * Get commit message examples
+ */
+function getCommitExamples(pattern) {
+    const examples = {
+        conventional: [
+            'feat: add user authentication',
+            'fix: resolve login button issue',
+            'docs: update README with setup instructions',
+            'refactor(auth): simplify login logic'
+        ],
+        angular: [
+            'feat(auth): add user login functionality',
+            'fix(ui): resolve button alignment issue',
+            'docs: update contributing guidelines',
+            'test(auth): add login unit tests'
+        ],
+        simple: [
+            'Add user authentication feature',
+            'Fix login button styling issue',
+            'Update documentation with new API'
+        ]
+    };
+    return examples[pattern] || [];
+}
+
+/**
+ * Show validation error with examples
+ */
+function showBranchValidationError(branchName, pattern) {
+    const examples = getBranchExamples(pattern);
+    const exampleText = examples.length > 0 ? `\n\nExamples:\n${examples.join('\n')}` : '';
+    
+    vscode.window.showErrorMessage(
+        `❌ Branch name "${branchName}" doesn't follow the ${pattern} convention.${exampleText}`,
+        'Open Settings'
+    ).then(selection => {
+        if (selection === 'Open Settings') {
+            vscode.commands.executeCommand('workbench.action.openSettings', 'validateBranch');
+        }
+    });
+}
+
+/**
+ * Show commit validation error with examples
+ */
+function showCommitValidationError(message, pattern) {
+    const examples = getCommitExamples(pattern);
+    const exampleText = examples.length > 0 ? `\n\nExamples:\n${examples.join('\n')}` : '';
+    
+    vscode.window.showErrorMessage(
+        `❌ Commit message doesn't follow the ${pattern} convention.${exampleText}`,
+        'Open Settings'
+    ).then(selection => {
+        if (selection === 'Open Settings') {
+            vscode.commands.executeCommand('workbench.action.openSettings', 'validateBranch');
+        }
+    });
+}
+
+/**
+ * Install git hooks that validate terminal commands
+ */
+function installGitHooks(workspacePath) {
+    const hooksDir = path.join(workspacePath, '.git', 'hooks');
+    const preCommitHook = path.join(hooksDir, 'pre-commit');
+    const commitMsgHook = path.join(hooksDir, 'commit-msg');
+    const postCheckoutHook = path.join(hooksDir, 'post-checkout');
+    
+    const config = getHookConfig(workspacePath);
+    
+    // Pre-commit hook - validates branch name before commit
+    const preCommitContent = `#!/bin/sh
+# VS Code Validate Branch Extension - Pre-commit hook
+# This hook validates the current branch name before allowing commits
+
+${config.enableBranchValidation ? generateBranchValidationScript(config) : ''}
+
+if [ "${config.enableBranchValidation}" = "true" ]; then
+    current_branch=$(git branch --show-current 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    
+    if [ -n "$current_branch" ] && [ "$current_branch" != "HEAD" ]; then
+        if ! validate_branch_name "$current_branch"; then
+            echo ""
+            echo "💡 Tip: Use 'Validate Branch: Create New Branch' command in VS Code for guided branch creation."
+            exit 1
+        fi
+    fi
+fi
+
+echo "✅ Branch name validation passed"
+`;
+
+    // Commit message hook - validates commit message format
+    const commitMsgContent = `#!/bin/sh
+# VS Code Validate Branch Extension - Commit message hook
+# This hook validates commit messages
+
+${config.enableCommitValidation ? generateCommitValidationScript(config) : ''}
+
+if [ "${config.enableCommitValidation}" = "true" ]; then
+    commit_message=$(cat "$1")
+    
+    if ! validate_commit_message "$commit_message"; then
+        echo ""
+        echo "💡 Tip: Use 'Validate Branch: Create Commit' command in VS Code for guided commit creation."
+        exit 1
+    fi
+fi
+
+echo "✅ Commit message validation passed"
+`;
+
+    // Post-checkout hook - validates branch name after checkout/creation
+    const postCheckoutContent = `#!/bin/sh
+# VS Code Validate Branch Extension - Post-checkout hook
+# This hook validates branch names after checkout or branch creation
+
+${config.enableBranchValidation ? generateBranchValidationScript(config) : ''}
+
+# Arguments: previous_head new_head branch_flag
+previous_head=$1
+new_head=$2
+branch_flag=$3
+
+# Only validate if this is a branch checkout (branch_flag = 1)
+if [ "$branch_flag" = "1" ] && [ "${config.enableBranchValidation}" = "true" ]; then
+    current_branch=$(git branch --show-current 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    
+    if [ -n "$current_branch" ] && [ "$current_branch" != "HEAD" ]; then
+        if ! validate_branch_name "$current_branch"; then
+            echo ""
+            echo "⚠️  Warning: Current branch name doesn't follow naming conventions."
+            echo "💡 Consider renaming this branch or use 'Validate Branch: Create New Branch' in VS Code."
+            echo ""
+            # Don't exit with error for post-checkout, just warn
+        else
+            echo "✅ Branch name follows ${config.branchPattern} convention"
+        fi
+    fi
+fi
+`;
+    
+    try {
+        if (!fs.existsSync(hooksDir)) {
+            fs.mkdirSync(hooksDir, { recursive: true });
+        }
+        
+        // Write hooks with executable permissions
+        fs.writeFileSync(preCommitHook, preCommitContent, { mode: 0o755 });
+        fs.writeFileSync(commitMsgHook, commitMsgContent, { mode: 0o755 });
+        fs.writeFileSync(postCheckoutHook, postCheckoutContent, { mode: 0o755 });
+        
+        vscode.window.showInformationMessage(
+            '✅ Git hooks installed successfully! Terminal git commands will now be validated.',
+            'Test Branch Creation',
+            'Test Commit'
+        ).then(selection => {
+            if (selection === 'Test Branch Creation') {
+                vscode.window.showInformationMessage(
+                    'Try: git checkout -b invalid-branch-name\nThen: git checkout -b feat/valid-branch-name'
+                );
+            } else if (selection === 'Test Commit') {
+                vscode.window.showInformationMessage(
+                    'Try: git commit -m "invalid message"\nThen: git commit -m "feat: valid message"'
+                );
+            }
+        });
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to install git hooks: ${error.message}`);
+    }
+}
+
+/**
+ * @param {vscode.ExtensionContext} context
+ */
+function activate(context) {
+    console.log('Validate Branch extension is now active!');
+    
+    // Register command to validate current branch
+    const validateCurrentBranch = vscode.commands.registerCommand('validate-branch.validateCurrentBranch', async function () {
+        const workspacePath = getWorkspacePath();
+        if (!workspacePath) {
+            vscode.window.showErrorMessage('No workspace folder found');
+            return;
+        }
+        
+        try {
+            const currentBranch = await executeGitCommand('git branch --show-current', workspacePath);
+            const config = getConfig();
+            
+            if (validateBranchName(currentBranch, config.branchPattern)) {
+                vscode.window.showInformationMessage(`✅ Branch "${currentBranch}" follows the ${config.branchPattern} convention`);
+            } else {
+                showBranchValidationError(currentBranch, config.branchPattern);
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Error: ${error.message}`);
+        }
+    });
+    
+    // Register command to create new branch with validation
+    const createBranch = vscode.commands.registerCommand('validate-branch.createBranch', async function () {
+        const workspacePath = getWorkspacePath();
+        if (!workspacePath) {
+            vscode.window.showErrorMessage('No workspace folder found');
+            return;
+        }
+        
+        const config = getConfig();
+        if (!config.enableBranchValidation) {
+            vscode.window.showInformationMessage('Branch validation is disabled');
+            return;
+        }
+        
+        const branchName = await vscode.window.showInputBox({
+            prompt: `Enter branch name (${config.branchPattern} convention)`,
+            placeHolder: getBranchExamples(config.branchPattern)[0] || 'branch-name'
+        });
+        
+        if (!branchName) {
+            return;
+        }
+        
+        if (!validateBranchName(branchName, config.branchPattern)) {
+            showBranchValidationError(branchName, config.branchPattern);
+            return;
+        }
+        
+        try {
+            await executeGitCommand(`git checkout -b ${branchName}`, workspacePath);
+            vscode.window.showInformationMessage(`✅ Branch "${branchName}" created successfully!`);
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to create branch: ${error.message}`);
+        }
+    });
+    
+    // Register command to validate commit message
+    const validateCommit = vscode.commands.registerCommand('validate-branch.validateCommit', async function () {
+        const config = getConfig();
+        if (!config.enableCommitValidation) {
+            vscode.window.showInformationMessage('Commit validation is disabled');
+            return;
+        }
+        
+        const commitMessage = await vscode.window.showInputBox({
+            prompt: `Enter commit message (${config.commitPattern} convention)`,
+            placeHolder: getCommitExamples(config.commitPattern)[0] || 'commit message'
+        });
+        
+        if (!commitMessage) {
+            return;
+        }
+        
+        if (!validateCommitMessage(commitMessage, config.commitPattern)) {
+            showCommitValidationError(commitMessage, config.commitPattern);
+            return;
+        }
+        
+        const workspacePath = getWorkspacePath();
+        if (!workspacePath) {
+            vscode.window.showErrorMessage('No workspace folder found');
+            return;
+        }
+        
+        try {
+            await executeGitCommand(`git commit -m "${commitMessage}"`, workspacePath);
+            vscode.window.showInformationMessage(`✅ Commit created successfully!`);
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to commit: ${error.message}`);
+        }
+    });
+    
+    // Register command to install git hooks
+    const installHooks = vscode.commands.registerCommand('validate-branch.installGitHooks', function () {
+        const workspacePath = getWorkspacePath();
+        if (!workspacePath) {
+            vscode.window.showErrorMessage('No workspace folder found');
+            return;
+        }
+        
+        installGitHooks(workspacePath);
+    });
+    
+    // Register command to show settings
+    const openSettings = vscode.commands.registerCommand('validate-branch.openSettings', function () {
+        vscode.commands.executeCommand('workbench.action.openSettings', 'validateBranch');
+    });
+    
+    // Add all commands to subscriptions
+    context.subscriptions.push(
+        validateCurrentBranch,
+        createBranch,
+        validateCommit,
+        installHooks,
+        openSettings
+    );
+    
+    // Show welcome message
+    vscode.window.showInformationMessage(
+        '🎉 Validate Branch extension activated! Use Ctrl+Shift+P and search for "Validate Branch" commands.',
+        'Open Settings',
+        'Install Git Hooks'
+    ).then(selection => {
+        if (selection === 'Open Settings') {
+            vscode.commands.executeCommand('validate-branch.openSettings');
+        } else if (selection === 'Install Git Hooks') {
+            vscode.commands.executeCommand('validate-branch.installGitHooks');
+        }
+    });
+}
+
+// This method is called when your extension is deactivated
+function deactivate() {}
+
+module.exports = {
+    activate,
+    deactivate
+}
