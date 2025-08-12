@@ -4,19 +4,14 @@ const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-// Branch naming conventions
+// Branch naming conventions - New JIRA style only
 const BRANCH_PATTERNS = {
-    gitflow: /^(feature|bugfix|hotfix|release)\/[a-z0-9-]+$/,
-    conventional: /^(feat|fix|docs|style|refactor|test|chore)\/[a-z0-9-]+$/,
-    jira: /^(feature|bugfix|hotfix)\/[A-Z]+-\d+-.+$/,
-    simple: /^[a-z0-9-]+$/
+    jira: /^(feature|bugfix|hotfix|release|chore)\/[A-Z]+-[0-9]+-[a-z0-9-]+$/
 };
 
-// Commit message patterns
+// Commit message patterns - New JIRA style only
 const COMMIT_PATTERNS = {
-    conventional: /^(feat|fix|docs|style|refactor|perf|test|chore)(\(.+\))?: .{1,50}/,
-    angular: /^(build|ci|docs|feat|fix|perf|refactor|style|test)(\(.+\))?: .{1,50}/,
-    simple: /^.{10,72}$/
+    jira: /^\[[A-Z]+-[0-9]+\] (feat|fix|docs|style|refactor|test|chore)\([a-z0-9-]+\): .{1,80}$/
 };
 
 /**
@@ -51,8 +46,8 @@ function executeGitCommand(command, workspacePath) {
 function getConfig() {
     const config = vscode.workspace.getConfiguration('validateBranch');
     return {
-        branchPattern: config.get('branchPattern', 'conventional'),
-        commitPattern: config.get('commitPattern', 'conventional'),
+        branchPattern: config.get('branchPattern', 'jira'),
+        commitPattern: config.get('commitPattern', 'jira'),
         enableBranchValidation: config.get('enableBranchValidation', true),
         enableCommitValidation: config.get('enableCommitValidation', true),
         customBranchPattern: config.get('customBranchPattern', ''),
@@ -67,8 +62,8 @@ function getHookConfig(workspacePath) {
     try {
         const configPath = path.join(workspacePath, '.vscode', 'settings.json');
         let config = {
-            branchPattern: 'conventional',
-            commitPattern: 'conventional',
+            branchPattern: 'jira',
+            commitPattern: 'jira',
             enableBranchValidation: true,
             enableCommitValidation: true,
             customBranchPattern: '',
@@ -88,8 +83,8 @@ function getHookConfig(workspacePath) {
         return config;
     } catch {
         return {
-            branchPattern: 'conventional',
-            commitPattern: 'conventional',
+            branchPattern: 'jira',
+            commitPattern: 'jira',
             enableBranchValidation: true,
             enableCommitValidation: true,
             customBranchPattern: '',
@@ -103,26 +98,20 @@ function getHookConfig(workspacePath) {
  */
 function generateBranchValidationScript(config) {
     const patterns = {
-        gitflow: '^(feature|bugfix|hotfix|release)/[a-z0-9-]+$',
-        conventional: '^(feat|fix|docs|style|refactor|test|chore)/[a-z0-9-]+$',
-        jira: '^(feature|bugfix|hotfix)/[A-Z]+-[0-9]+-.+$',
-        simple: '^[a-z0-9-]+$'
+        jira: '^(feature|bugfix|hotfix|release|chore)/[A-Z]+-[0-9]+-[a-z0-9-]+$'
     };
     
     const pattern = config.branchPattern === 'custom' && config.customBranchPattern 
         ? config.customBranchPattern 
-        : patterns[config.branchPattern] || patterns.conventional;
+        : patterns[config.branchPattern] || patterns.jira;
     
     const examples = {
-        gitflow: ['feature/user-authentication', 'bugfix/login-error', 'hotfix/security-patch', 'release/v1.2.0'],
-        conventional: ['feat/user-login', 'fix/button-styling', 'docs/readme-update', 'refactor/api-cleanup'],
-        jira: ['feature/PROJ-123-user-login', 'bugfix/PROJ-456-fix-crash', 'hotfix/PROJ-789-security-fix'],
-        simple: ['user-authentication', 'fix-login-bug', 'update-documentation']
+        jira: ['feature/APC-2876-user-auth', 'bugfix/APC-1234-login-fix', 'hotfix/APC-5678-security-patch', 'release/APC-9999-v2-release', 'chore/APC-1111-update-deps']
     };
     
     const exampleList = config.branchPattern === 'custom' 
         ? ['custom-pattern-example'] 
-        : examples[config.branchPattern] || examples.conventional;
+        : examples[config.branchPattern] || examples.jira;
     
     return `
 validate_branch_name() {
@@ -147,24 +136,20 @@ validate_branch_name() {
  */
 function generateCommitValidationScript(config) {
     const patterns = {
-        conventional: '^(feat|fix|docs|style|refactor|perf|test|chore)(\\(.+\\))?: .{1,50}',
-        angular: '^(build|ci|docs|feat|fix|perf|refactor|style|test)(\\(.+\\))?: .{1,50}',
-        simple: '^.{10,72}$'
+        jira: '^\\[[A-Z]+-[0-9]+\\] (feat|fix|docs|style|refactor|test|chore)\\([a-z0-9-]+\\): .{1,80}$'
     };
     
     const pattern = config.commitPattern === 'custom' && config.customCommitPattern 
         ? config.customCommitPattern 
-        : patterns[config.commitPattern] || patterns.conventional;
+        : patterns[config.commitPattern] || patterns.jira;
     
     const examples = {
-        conventional: ['feat: add user authentication', 'fix: resolve login button issue', 'docs: update README with setup instructions', 'refactor(auth): simplify login logic'],
-        angular: ['feat(auth): add user login functionality', 'fix(ui): resolve button alignment issue', 'docs: update contributing guidelines', 'test(auth): add login unit tests'],
-        simple: ['Add user authentication feature', 'Fix login button styling issue', 'Update documentation with new API']
+        jira: ['[APC-2356] feat(auth): Add Login Functionality', '[APC-1234] fix(ui): Resolve button alignment issue', '[APC-5678] docs(readme): Update installation guide', '[APC-9999] refactor(api): Simplify user service']
     };
     
     const exampleList = config.commitPattern === 'custom' 
         ? ['custom-pattern-example'] 
-        : examples[config.commitPattern] || examples.conventional;
+        : examples[config.commitPattern] || examples.jira;
     
     return `
 validate_commit_message() {
@@ -239,30 +224,15 @@ function validateCommitMessage(message, pattern) {
  */
 function getBranchExamples(pattern) {
     const examples = {
-        gitflow: [
-            'feature/user-authentication',
-            'bugfix/login-error',
-            'hotfix/security-patch',
-            'release/v1.2.0'
-        ],
-        conventional: [
-            'feat/user-login',
-            'fix/button-styling',
-            'docs/readme-update',
-            'refactor/api-cleanup'
-        ],
         jira: [
-            'feature/PROJ-123-user-login',
-            'bugfix/PROJ-456-fix-crash',
-            'hotfix/PROJ-789-security-fix'
-        ],
-        simple: [
-            'user-authentication',
-            'fix-login-bug',
-            'update-documentation'
+            'feature/APC-2876-user-auth',
+            'bugfix/APC-1234-login-fix',
+            'hotfix/APC-5678-security-patch',
+            'release/APC-9999-v2-release',
+            'chore/APC-1111-update-deps'
         ]
     };
-    return examples[pattern] || [];
+    return examples[pattern] || examples.jira;
 }
 
 /**
@@ -270,25 +240,14 @@ function getBranchExamples(pattern) {
  */
 function getCommitExamples(pattern) {
     const examples = {
-        conventional: [
-            'feat: add user authentication',
-            'fix: resolve login button issue',
-            'docs: update README with setup instructions',
-            'refactor(auth): simplify login logic'
-        ],
-        angular: [
-            'feat(auth): add user login functionality',
-            'fix(ui): resolve button alignment issue',
-            'docs: update contributing guidelines',
-            'test(auth): add login unit tests'
-        ],
-        simple: [
-            'Add user authentication feature',
-            'Fix login button styling issue',
-            'Update documentation with new API'
+        jira: [
+            '[APC-2356] feat(auth): Add Login Functionality',
+            '[APC-1234] fix(ui): Resolve button alignment issue',
+            '[APC-5678] docs(readme): Update installation guide',
+            '[APC-9999] refactor(api): Simplify user service'
         ]
     };
-    return examples[pattern] || [];
+    return examples[pattern] || examples.jira;
 }
 
 /**
@@ -323,6 +282,39 @@ function showCommitValidationError(message, pattern) {
             vscode.commands.executeCommand('workbench.action.openSettings', 'validateBranch');
         }
     });
+}
+
+/**
+ * Remove git hooks installed by this extension
+ */
+function removeGitHooks(workspacePath) {
+    const hooksDir = path.join(workspacePath, '.git', 'hooks');
+    const preCommitHook = path.join(hooksDir, 'pre-commit');
+    const commitMsgHook = path.join(hooksDir, 'commit-msg');
+    const postCheckoutHook = path.join(hooksDir, 'post-checkout');
+    
+    try {
+        // Check if hooks exist and contain our extension signature before removing
+        const extensionSignature = '# VS Code Validate Branch Extension';
+        
+        [preCommitHook, commitMsgHook, postCheckoutHook].forEach(hookPath => {
+            if (fs.existsSync(hookPath)) {
+                try {
+                    const content = fs.readFileSync(hookPath, 'utf8');
+                    if (content.includes(extensionSignature)) {
+                        fs.unlinkSync(hookPath);
+                        console.log(`Removed git hook: ${path.basename(hookPath)}`);
+                    }
+                } catch (error) {
+                    console.error(`Failed to remove hook ${hookPath}:`, error.message);
+                }
+            }
+        });
+        
+        console.log('Git hooks cleanup completed');
+    } catch (error) {
+        console.error('Failed to remove git hooks:', error.message);
+    }
 }
 
 /**
@@ -425,11 +417,11 @@ fi
         ).then(selection => {
             if (selection === 'Test Branch Creation') {
                 vscode.window.showInformationMessage(
-                    'Try: git checkout -b invalid-branch-name\nThen: git checkout -b feat/valid-branch-name'
+                    'Try: git checkout -b invalid-branch-name\nThen: git checkout -b feature/APC-2876-user-auth'
                 );
             } else if (selection === 'Test Commit') {
                 vscode.window.showInformationMessage(
-                    'Try: git commit -m "invalid message"\nThen: git commit -m "feat: valid message"'
+                    'Try: git commit -m "invalid message"\nThen: git commit -m "[APC-2356] feat(auth): Add Login Functionality"'
                 );
             }
         });
@@ -482,7 +474,7 @@ function activate(context) {
         
         const branchName = await vscode.window.showInputBox({
             prompt: `Enter branch name (${config.branchPattern} convention)`,
-            placeHolder: getBranchExamples(config.branchPattern)[0] || 'branch-name'
+            placeHolder: getBranchExamples(config.branchPattern)[0] || 'feature/APC-2876-user-auth'
         });
         
         if (!branchName) {
@@ -512,7 +504,7 @@ function activate(context) {
         
         const commitMessage = await vscode.window.showInputBox({
             prompt: `Enter commit message (${config.commitPattern} convention)`,
-            placeHolder: getCommitExamples(config.commitPattern)[0] || 'commit message'
+            placeHolder: getCommitExamples(config.commitPattern)[0] || '[APC-2356] feat(auth): Add Login Functionality'
         });
         
         if (!commitMessage) {
@@ -549,6 +541,18 @@ function activate(context) {
         installGitHooks(workspacePath);
     });
     
+    // Register command to remove git hooks
+    const removeHooks = vscode.commands.registerCommand('validate-branch.removeGitHooks', function () {
+        const workspacePath = getWorkspacePath();
+        if (!workspacePath) {
+            vscode.window.showErrorMessage('No workspace folder found');
+            return;
+        }
+        
+        removeGitHooks(workspacePath);
+        vscode.window.showInformationMessage('✅ Git hooks removed successfully! Terminal git commands will no longer be validated.');
+    });
+    
     // Register command to show settings
     const openSettings = vscode.commands.registerCommand('validate-branch.openSettings', function () {
         vscode.commands.executeCommand('workbench.action.openSettings', 'validateBranch');
@@ -560,6 +564,7 @@ function activate(context) {
         createBranch,
         validateCommit,
         installHooks,
+        removeHooks,
         openSettings
     );
     
@@ -578,7 +583,21 @@ function activate(context) {
 }
 
 // This method is called when your extension is deactivated
-function deactivate() {}
+function deactivate() {
+    console.log('Validate Branch extension is being deactivated...');
+    
+    // Clean up git hooks from all workspace folders
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0) {
+        workspaceFolders.forEach(folder => {
+            const workspacePath = folder.uri.fsPath;
+            console.log(`Cleaning up git hooks for workspace: ${workspacePath}`);
+            removeGitHooks(workspacePath);
+        });
+    }
+    
+    console.log('Validate Branch extension deactivated and cleaned up successfully');
+}
 
 module.exports = {
     activate,
