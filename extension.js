@@ -4,6 +4,9 @@ const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+// Global reference to status bar item for cleanup
+let globalStatusBarItem = null;
+
 // Branch naming conventions - New JIRA style only
 const BRANCH_PATTERNS = {
     jira: /^(feature|bugfix|hotfix|release|chore)\/[A-Z]+-[0-9]+-[a-z0-9-]+$/
@@ -470,6 +473,59 @@ fi
 function activate(context) {
     console.log('Validate Branch extension is now active!');
     
+    // Create status bar item
+    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    statusBarItem.command = 'validate-branch.openSettings';
+    
+    // Store global reference for cleanup
+    globalStatusBarItem = statusBarItem;
+    
+    // Function to update status bar
+    function updateStatusBar() {
+        const workspacePath = getWorkspacePath();
+        if (!workspacePath) {
+            statusBarItem.text = "$(warning) VB: No Workspace";
+            statusBarItem.tooltip = "No workspace folder found";
+            statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+        } else {
+            // Check if git hooks are installed
+            const hooksDir = path.join(workspacePath, '.git', 'hooks');
+            const preCommitHook = path.join(hooksDir, 'pre-commit');
+            const extensionSignature = '# VS Code Validate Branch Extension';
+            
+            let hooksInstalled = false;
+            if (fs.existsSync(preCommitHook)) {
+                try {
+                    const content = fs.readFileSync(preCommitHook, 'utf8');
+                    hooksInstalled = content.includes(extensionSignature);
+                } catch (error) {
+                    // Ignore error, hooks not installed
+                }
+            }
+            
+            if (hooksInstalled) {
+                statusBarItem.text = "$(check-all) VB: Active";
+                statusBarItem.tooltip = "Git hooks installed - Branch and commit validation active\nClick to open settings";
+                statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.prominentBackground');
+            } else {
+                statusBarItem.text = "$(circle-outline) VB: Ready";
+                statusBarItem.tooltip = "Extension loaded - Click to install git hooks or open settings";
+                statusBarItem.backgroundColor = undefined;
+            }
+        }
+        statusBarItem.show();
+    }
+    
+    // Initial status bar update
+    updateStatusBar();
+    
+    // Update status bar when workspace folders change
+    const workspaceWatcher = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        updateStatusBar();
+    });
+    
+    context.subscriptions.push(statusBarItem, workspaceWatcher);
+    
     // Register command to validate current branch
     const validateCurrentBranch = vscode.commands.registerCommand('validate-branch.validateCurrentBranch', async function () {
         const workspacePath = getWorkspacePath();
@@ -573,6 +629,8 @@ function activate(context) {
         }
         
         installGitHooks(workspacePath);
+        // Update status bar after installing hooks
+        setTimeout(updateStatusBar, 100);
     });
     
     // Register command to remove git hooks
@@ -585,6 +643,8 @@ function activate(context) {
         
         removeGitHooks(workspacePath);
         vscode.window.showInformationMessage('✅ Git hooks removed successfully! Terminal git commands will no longer be validated.');
+        // Update status bar after removing hooks
+        setTimeout(updateStatusBar, 100);
     });
     
     // Register command to show settings
@@ -619,6 +679,14 @@ function activate(context) {
 // This method is called when your extension is deactivated
 function deactivate() {
     console.log('Validate Branch extension is being deactivated...');
+    
+    // Hide and dispose of the status bar item
+    if (globalStatusBarItem) {
+        globalStatusBarItem.hide();
+        globalStatusBarItem.dispose();
+        globalStatusBarItem = null;
+        console.log('Status bar item removed and disposed');
+    }
     
     // Clean up git hooks from all workspace folders
     const workspaceFolders = vscode.workspace.workspaceFolders;

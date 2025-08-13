@@ -3,11 +3,11 @@
   "displayName": "BranchCommit Validator",
   "publisher": "UtkarshLanjewar",
   "description": "Enforce branch naming and commit message conventions to maintain consistent Git workflow standards",
-  "version": "0.0.7",
+  "version": "1.0.0",
   "keywords": ["git", "branch", "commit", "validation", "convention", "workflow"],
   "icon": "images/icon.png",
   "engines": {
-    "vscode": "*"
+    "vscode": "^0.10.0"
   },
   "categories": [
     "Other"
@@ -107,7 +107,7 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.102.0",
+    "@types/vscode": "^0.10.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "eslint": "^9.32.0",
