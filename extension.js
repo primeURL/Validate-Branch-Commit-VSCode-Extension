@@ -292,12 +292,13 @@ function removeGitHooks(workspacePath) {
     const preCommitHook = path.join(hooksDir, 'pre-commit');
     const commitMsgHook = path.join(hooksDir, 'commit-msg');
     const postCheckoutHook = path.join(hooksDir, 'post-checkout');
+    const prePushHook = path.join(hooksDir, 'pre-push');
     
     try {
         // Check if hooks exist and contain our extension signature before removing
         const extensionSignature = '# VS Code Validate Branch Extension';
         
-        [preCommitHook, commitMsgHook, postCheckoutHook].forEach(hookPath => {
+        [preCommitHook, commitMsgHook, postCheckoutHook, prePushHook].forEach(hookPath => {
             if (fs.existsSync(hookPath)) {
                 try {
                     const content = fs.readFileSync(hookPath, 'utf8');
@@ -325,6 +326,7 @@ function installGitHooks(workspacePath) {
     const preCommitHook = path.join(hooksDir, 'pre-commit');
     const commitMsgHook = path.join(hooksDir, 'commit-msg');
     const postCheckoutHook = path.join(hooksDir, 'post-checkout');
+    const prePushHook = path.join(hooksDir, 'pre-push');
     
     const config = getHookConfig(workspacePath);
     
@@ -342,6 +344,7 @@ if [ "${config.enableBranchValidation}" = "true" ]; then
         if ! validate_branch_name "$current_branch"; then
             echo ""
             echo "💡 Tip: Use 'Validate Branch: Create New Branch' command in VS Code for guided branch creation."
+            echo "💡 Or rename this branch: git branch -m <new-valid-name>"
             exit 1
         fi
     fi
@@ -370,10 +373,39 @@ fi
 echo "✅ Commit message validation passed"
 `;
 
-    // Post-checkout hook - validates branch name after checkout/creation
+    // Pre-push hook - validates branch name before pushing
+    const prePushContent = `#!/bin/sh
+# VS Code Validate Branch Extension - Pre-push hook
+# This hook validates branch names before they are pushed to remote
+
+${config.enableBranchValidation ? generateBranchValidationScript(config) : ''}
+
+if [ "${config.enableBranchValidation}" = "true" ]; then
+    # Read from stdin: local_ref local_sha remote_ref remote_sha
+    while read local_ref local_sha remote_ref remote_sha; do
+        # Extract branch name from ref
+        if [ "$local_ref" != "(delete)" ]; then
+            branch_name=$(echo "$local_ref" | sed 's/refs\/heads\///')
+            
+            if [ -n "$branch_name" ]; then
+                if ! validate_branch_name "$branch_name"; then
+                    echo ""
+                    echo "💡 Tip: Rename your branch before pushing: git branch -m <new-valid-name>"
+                    echo "💡 Or use 'Validate Branch: Create New Branch' command in VS Code for guided branch creation."
+                    exit 1
+                fi
+            fi
+        fi
+    done
+fi
+
+echo "✅ Branch name validation passed for push"
+`;
+
+    // Post-checkout hook - warns about invalid branch names after checkout/creation
     const postCheckoutContent = `#!/bin/sh
 # VS Code Validate Branch Extension - Post-checkout hook
-# This hook validates branch names after checkout or branch creation
+# This hook warns about invalid branch names after checkout or branch creation
 
 ${config.enableBranchValidation ? generateBranchValidationScript(config) : ''}
 
@@ -389,10 +421,11 @@ if [ "$branch_flag" = "1" ] && [ "${config.enableBranchValidation}" = "true" ]; 
     if [ -n "$current_branch" ] && [ "$current_branch" != "HEAD" ]; then
         if ! validate_branch_name "$current_branch"; then
             echo ""
-            echo "⚠️  Warning: Current branch name doesn't follow naming conventions."
-            echo "💡 Consider renaming this branch or use 'Validate Branch: Create New Branch' in VS Code."
+            echo "⚠️  WARNING: Branch name '$current_branch' doesn't follow naming conventions!"
+            echo "💡 This branch will be blocked from commits and pushes until renamed."
+            echo "💡 To rename: git branch -m <new-valid-name>"
+            echo "💡 Or use 'Validate Branch: Create New Branch' command in VS Code for guided branch creation."
             echo ""
-            # Don't exit with error for post-checkout, just warn
         else
             echo "✅ Branch name follows ${config.branchPattern} convention"
         fi
@@ -409,6 +442,7 @@ fi
         fs.writeFileSync(preCommitHook, preCommitContent, { mode: 0o755 });
         fs.writeFileSync(commitMsgHook, commitMsgContent, { mode: 0o755 });
         fs.writeFileSync(postCheckoutHook, postCheckoutContent, { mode: 0o755 });
+        fs.writeFileSync(prePushHook, prePushContent, { mode: 0o755 });
         
         vscode.window.showInformationMessage(
             '✅ Git hooks installed successfully! Terminal git commands will now be validated.',
@@ -417,7 +451,7 @@ fi
         ).then(selection => {
             if (selection === 'Test Branch Creation') {
                 vscode.window.showInformationMessage(
-                    'Try: git checkout -b invalid-branch-name\nThen: git checkout -b feature/APC-2876-user-auth'
+                    'Try: git checkout -b Hello\nYou\'ll see a warning, and commits/pushes will be blocked until renamed.'
                 );
             } else if (selection === 'Test Commit') {
                 vscode.window.showInformationMessage(
@@ -570,7 +604,7 @@ function activate(context) {
     
     // Show welcome message
     vscode.window.showInformationMessage(
-        '🎉 Validate Branch extension activated! Use Ctrl+Shift+P and search for "Validate Branch" commands.',
+        '🎉 Validate Branch extension activated! Use Ctrl+Shift+P and search for "Validate Branch : Install Git Hooks" commands.',
         'Open Settings',
         'Install Git Hooks'
     ).then(selection => {

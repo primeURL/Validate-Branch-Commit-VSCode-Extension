@@ -1,44 +1,58 @@
 {
   "name": "validate-branch",
-  "displayName": "Validate Branch",
+  "displayName": "BranchCommit Validator",
   "publisher": "UtkarshLanjewar",
   "description": "Enforce branch naming and commit message conventions to maintain consistent Git workflow standards",
-  "version": "0.0.1",
+  "version": "0.0.7",
   "keywords": ["git", "branch", "commit", "validation", "convention", "workflow"],
+  "icon": "images/icon.png",
   "engines": {
-    "vscode": "^1.102.0"
+    "vscode": "*"
   },
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
       {
         "command": "validate-branch.validateCurrentBranch",
         "title": "Validate Current Branch",
-        "category": "Validate Branch"
+        "category": "Validate Branch",
+        "icon": "$(check)"
       },
       {
         "command": "validate-branch.createBranch",
         "title": "Create New Branch (with validation)",
-        "category": "Validate Branch"
+        "category": "Validate Branch",
+        "icon": "$(git-branch)"
       },
       {
         "command": "validate-branch.validateCommit",
         "title": "Create Commit (with validation)",
-        "category": "Validate Branch"
+        "category": "Validate Branch",
+        "icon": "$(git-commit)"
       },
       {
         "command": "validate-branch.installGitHooks",
         "title": "Install Git Hooks",
-        "category": "Validate Branch"
+        "category": "Validate Branch",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "validate-branch.removeGitHooks",
+        "title": "Remove Git Hooks",
+        "category": "Validate Branch",
+        "icon": "$(trash)"
       },
       {
         "command": "validate-branch.openSettings",
         "title": "Open Settings",
-        "category": "Validate Branch"
+        "category": "Validate Branch",
+        "icon": "$(settings-gear)"
       }
     ],
     "configuration": {
@@ -46,26 +60,21 @@
       "properties": {
         "validateBranch.branchPattern": {
           "type": "string",
-          "enum": ["gitflow", "conventional", "jira", "simple", "custom"],
-          "default": "conventional",
+          "enum": ["jira", "custom"],
+          "default": "jira",
           "description": "Branch naming convention to enforce",
           "enumDescriptions": [
-            "GitFlow: feature/*, bugfix/*, hotfix/*, release/*",
-            "Conventional: feat/*, fix/*, docs/*, style/*, refactor/*, test/*, chore/*",
-            "JIRA: feature/PROJ-123-*, bugfix/PROJ-456-*, hotfix/PROJ-789-*",
-            "Simple: lowercase with hyphens",
+            "JIRA: (feature|bugfix|hotfix|release|chore)/PROJECT-123-description",
             "Custom: use your own regex pattern"
           ]
         },
         "validateBranch.commitPattern": {
           "type": "string",
-          "enum": ["conventional", "angular", "simple", "custom"],
-          "default": "conventional",
+          "enum": ["jira", "custom"],
+          "default": "jira",
           "description": "Commit message convention to enforce",
           "enumDescriptions": [
-            "Conventional Commits: type(scope): description",
-            "Angular: build|ci|docs|feat|fix|perf|refactor|style|test(scope): description",
-            "Simple: any message between 10-72 characters",
+            "JIRA: [PROJECT-123] type(scope): description",
             "Custom: use your own regex pattern"
           ]
         },
